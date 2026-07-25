@@ -415,7 +415,9 @@ func (wa *WhatsAppClient) resyncContacts(forceAvatarSync, automatic bool) {
 // DM portals named from private_chat_name_template instead.
 // 2: sweep every DM portal, not just those matching a saved contact — DMs with people the
 // user never saved were left holding names derived from another user's address book.
-const CurrentNameSchemeVersion = 2
+// 3: name the self-chat and LID-only chats too. Any DM left without an explicit name keeps
+// following the global ghost, so another user's contact sync can rename it at any time.
+const CurrentNameSchemeVersion = 3
 
 // resyncNamesIfSchemeChanged runs a one-off contact resync when this login's names were
 // rendered by an older naming scheme. Without it a naming change only reaches chats that

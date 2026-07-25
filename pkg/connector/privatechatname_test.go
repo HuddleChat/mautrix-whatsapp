@@ -78,6 +78,17 @@ func TestPrivateChatNameFallbackOrder(t *testing.T) {
 	}
 }
 
+// A DM left without an explicit name keeps following the global ghost, so any other user's
+// contact sync can rename it. The deployed template must therefore always render something
+// for a phone-number JID, even with no contact info at all.
+func TestDeployedTemplateNeverRendersEmptyForPhoneJID(t *testing.T) {
+	cfg := newTestConfig(t, `{{or .FullName .FirstName .BusinessName .PushName .Phone}}`)
+
+	if got := cfg.FormatPrivateChatName(testJID(), "", types.ContactInfo{}); got == "" {
+		t.Error("template rendered empty with no contact info; the room would stay ghost-named")
+	}
+}
+
 func TestInvalidPrivateChatNameTemplateIsRejected(t *testing.T) {
 	cfg := &Config{
 		DisplaynameTemplate:     safeDisplaynameTemplate,

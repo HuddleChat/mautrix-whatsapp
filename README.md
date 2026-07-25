@@ -26,6 +26,12 @@
 >   contact-driven sweep missed DMs with people the user never saved, which were exactly the
 >   rooms still holding a name derived from another user's address book. Touches
 >   `pkg/connector/userinfo.go`.
+> * **2026-07-25** — Name the self-chat and LID-only chats as well, and re-render a DM's name
+>   when its contact/push name changes. A DM without an explicit name keeps following the
+>   global ghost, and `updateDMPortals` reaches DM portals across *all* logins, so any other
+>   user's contact sync could rename such a room — including retitling someone's own notes
+>   room with a stranger's label for them. Touches `pkg/connector/chatinfo.go`,
+>   `pkg/connector/handlewhatsapp.go` and `pkg/connector/userinfo.go`.
 
 A Matrix-WhatsApp puppeting bridge based on [whatsmeow](https://github.com/tulir/whatsmeow).
 

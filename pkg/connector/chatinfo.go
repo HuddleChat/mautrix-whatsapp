@@ -186,11 +186,21 @@ func (wa *WhatsAppClient) wrapDMInfo(ctx context.Context, jid types.JID) *bridge
 // bridge), portal rooms are per-login when split_portals is enabled, so address-book fields
 // can be used here without leaking one user's private contact label to another user.
 //
-// Returns "" when no template is configured, the peer is the user themselves, or the
-// template rendered empty — callers must then leave ChatInfo.Name nil.
+// Returns "" only when no template is configured, or when the template rendered nothing at
+// all — callers must then leave ChatInfo.Name nil.
+//
+// Note this deliberately still returns a name for the self-chat ("message yourself"). Ghost
+// names are global, so leaving that room unnamed lets it inherit whatever label some other
+// user gave this person, i.e. the user ends up seeing themselves under a stranger's name for
+// them. The user's own push name is the right title for their own notes room.
 func (wa *WhatsAppClient) privateChatName(ctx context.Context, jid types.JID) string {
-	if wa.Main.Config.PrivateChatNameTemplate == "" || jid == wa.JID.ToNonAD() {
+	if wa.Main.Config.PrivateChatNameTemplate == "" {
 		return ""
+	}
+	if jid == wa.JID.ToNonAD() {
+		if ownName := strings.TrimSpace(wa.GetStore().PushName); ownName != "" {
+			return ownName
+		}
 	}
 	contact, err := wa.GetStore().Contacts.GetContact(ctx, jid)
 	if err != nil {
@@ -198,7 +208,23 @@ func (wa *WhatsAppClient) privateChatName(ctx context.Context, jid types.JID) st
 			Msg("Failed to get contact info for private chat name")
 		return ""
 	}
-	return strings.TrimSpace(wa.Main.Config.FormatPrivateChatName(jid, "", contact))
+	if name := strings.TrimSpace(wa.Main.Config.FormatPrivateChatName(jid, "", contact)); name != "" {
+		return name
+	}
+
+	// LID-only chats can render empty, because the template's .Phone is only filled in for
+	// phone-number JIDs. Fall back to the linked phone number JID: a room left without an
+	// explicit name keeps following the (global) ghost, which is what leaks other users'
+	// contact names in the first place.
+	altJID, err := wa.GetStore().GetAltJID(ctx, jid)
+	if err != nil || altJID.IsEmpty() || altJID.Server != types.DefaultUserServer {
+		return ""
+	}
+	altContact, err := wa.GetStore().Contacts.GetContact(ctx, altJID)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(wa.Main.Config.FormatPrivateChatName(altJID, "", altContact))
 }
 
 func (wa *WhatsAppClient) wrapStatusBroadcastInfo(ctx context.Context) *bridgev2.ChatInfo {

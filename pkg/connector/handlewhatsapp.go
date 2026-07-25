@@ -698,6 +698,10 @@ func (wa *WhatsAppClient) syncGhost(jid types.JID, reason string, pictureID *str
 		ghost.UpdateInfo(ctx, userInfo)
 		log.Debug().Msg("Synced ghost info")
 		wa.syncAltGhostWithInfo(ctx, jid, userInfo)
+		// DM portal names are marked custom so another user's ghost sync can't rewrite
+		// them, which also means ghost updates no longer carry name changes into the room.
+		// Re-render this login's own DM name here so push/business name changes still show.
+		wa.resyncPrivateChatName(ctx, jid)
 	}
 	go wa.syncRemoteProfile(ctx, ghost)
 }
