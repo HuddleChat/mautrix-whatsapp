@@ -413,7 +413,9 @@ func (wa *WhatsAppClient) resyncContacts(forceAvatarSync, automatic bool) {
 //
 // 1: address-book fields removed from displayname_template (they leaked across users) and
 // DM portals named from private_chat_name_template instead.
-const CurrentNameSchemeVersion = 1
+// 2: sweep every DM portal, not just those matching a saved contact — DMs with people the
+// user never saved were left holding names derived from another user's address book.
+const CurrentNameSchemeVersion = 2
 
 // resyncNamesIfSchemeChanged runs a one-off contact resync when this login's names were
 // rendered by an older naming scheme. Without it a naming change only reaches chats that
@@ -431,6 +433,7 @@ func (wa *WhatsAppClient) resyncNamesIfSchemeChanged() {
 		Msg("Naming scheme changed, resyncing contact names")
 
 	wa.resyncContacts(false, true)
+	wa.resyncPrivateChatNames(ctx)
 	if ctx.Err() != nil {
 		// Interrupted part-way: leave the version alone so the sweep runs again next time.
 		return
@@ -439,6 +442,31 @@ func (wa *WhatsAppClient) resyncNamesIfSchemeChanged() {
 	meta.NameSchemeVersion = CurrentNameSchemeVersion
 	if err := wa.UserLogin.Save(ctx); err != nil {
 		log.Err(err).Msg("Failed to save name scheme version")
+	}
+}
+
+// resyncPrivateChatNames re-renders every DM portal this login is in.
+//
+// resyncContacts only walks the login's own contact list, which misses DMs with people the
+// user never saved — and those are exactly the rooms that kept a name derived from someone
+// else's address book, since nothing else ever refreshes them.
+func (wa *WhatsAppClient) resyncPrivateChatNames(ctx context.Context) {
+	log := zerolog.Ctx(ctx)
+	userPortals, err := wa.Main.Bridge.DB.UserPortal.GetAllForLogin(ctx, wa.UserLogin.UserLogin)
+	if err != nil {
+		log.Err(err).Msg("Failed to list portals to resync private chat names")
+		return
+	}
+	log.Info().Int("portal_count", len(userPortals)).Msg("Resyncing private chat names")
+	for _, userPortal := range userPortals {
+		if ctx.Err() != nil {
+			return
+		}
+		jid, err := waid.ParsePortalID(userPortal.Portal.ID)
+		if err != nil || jid.Server == types.GroupServer || jid.Server == types.BroadcastServer {
+			continue
+		}
+		wa.resyncPrivateChatName(ctx, jid)
 	}
 }
 

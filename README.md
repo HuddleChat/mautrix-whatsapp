@@ -22,6 +22,10 @@
 >   refreshes DM portal names, and a `name_scheme_version` field on the user login triggers
 >   a one-off resync after connecting when it trails the current scheme. Touches
 >   `pkg/connector/userinfo.go`, `pkg/connector/handlewhatsapp.go` and `pkg/waid/dbmeta.go`.
+> * **2026-07-25** — Sweep every DM portal, not only those matching a saved contact. The
+>   contact-driven sweep missed DMs with people the user never saved, which were exactly the
+>   rooms still holding a name derived from another user's address book. Touches
+>   `pkg/connector/userinfo.go`.
 
 A Matrix-WhatsApp puppeting bridge based on [whatsmeow](https://github.com/tulir/whatsmeow).
 
