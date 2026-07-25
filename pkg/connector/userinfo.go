@@ -417,7 +417,9 @@ func (wa *WhatsAppClient) resyncContacts(forceAvatarSync, automatic bool) {
 // user never saved were left holding names derived from another user's address book.
 // 3: name the self-chat and LID-only chats too. Any DM left without an explicit name keeps
 // following the global ghost, so another user's contact sync can rename it at any time.
-const CurrentNameSchemeVersion = 3
+// 4: mark names custom even when the existing name already matches — those rooms were still
+// unprotected, so a ghost update could rename them away from a name that was already right.
+const CurrentNameSchemeVersion = 4
 
 // resyncNamesIfSchemeChanged runs a one-off contact resync when this login's names were
 // rendered by an older naming scheme. Without it a naming change only reaches chats that
@@ -488,7 +490,20 @@ func (wa *WhatsAppClient) resyncPrivateChatName(ctx context.Context, jid types.J
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Stringer("jid", jid).Msg("Failed to get portal to resync name")
 		return
-	} else if portal == nil || portal.MXID == "" || portal.Name == name {
+	} else if portal == nil || portal.MXID == "" {
+		return
+	}
+	if portal.Name == name {
+		if portal.NameIsCustom {
+			return
+		}
+		// The name is already right but isn't marked custom, so a ghost update from any
+		// other login could still rename this room. UpdateInfo would flip the flag without
+		// persisting it (it only saves when something actually changed), so record it here.
+		portal.NameIsCustom = true
+		if err := portal.Save(ctx); err != nil {
+			zerolog.Ctx(ctx).Err(err).Stringer("jid", jid).Msg("Failed to save portal name protection")
+		}
 		return
 	}
 	portal.UpdateInfo(ctx, &bridgev2.ChatInfo{Name: &name}, wa.UserLogin, nil, time.Time{})
