@@ -44,6 +44,12 @@ type UserLoginMetadata struct {
 	HistorySyncPortalsNeedCreating bool      `json:"history_sync_portals_need_creating,omitempty"`
 	ReachoutTimelockUntil          time.Time `json:"reachout_timelock_until,omitempty"`
 
+	// NameSchemeVersion records which naming scheme this login's ghosts and DM portals were
+	// last rendered with. When it trails the current version the bridge runs a one-off
+	// contact resync after connecting, so a naming change (such as removing address-book
+	// fields from displayname_template) reaches existing rooms instead of only new ones.
+	NameSchemeVersion int `json:"name_scheme_version,omitempty"`
+
 	MData json.RawMessage `json:"mdata,omitempty"`
 }
 

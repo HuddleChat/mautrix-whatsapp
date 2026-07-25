@@ -16,6 +16,12 @@
 >   per-login name instead, which is private as long as `split_portals` is enabled.
 >   Touches `pkg/connector/config.go`, `pkg/connector/chatinfo.go` and
 >   `pkg/connector/example-config.yaml`; adds `pkg/connector/privatechatname_test.go`.
+> * **2026-07-25** — Re-render names for existing chats when the naming scheme changes.
+>   Upstream only resyncs a DM portal when the user opens the chat, so a change to the
+>   name templates never reaches rooms that already exist. `resyncContacts` now also
+>   refreshes DM portal names, and a `name_scheme_version` field on the user login triggers
+>   a one-off resync after connecting when it trails the current scheme. Touches
+>   `pkg/connector/userinfo.go`, `pkg/connector/handlewhatsapp.go` and `pkg/waid/dbmeta.go`.
 
 A Matrix-WhatsApp puppeting bridge based on [whatsmeow](https://github.com/tulir/whatsmeow).
 

@@ -402,8 +402,66 @@ func (wa *WhatsAppClient) resyncContacts(forceAvatarSync, automatic bool) {
 			userInfo := wa.contactToUserInfo(ctx, jid, contact, forceAvatarSync || ghost.AvatarID == "")
 			ghost.UpdateInfo(ctx, userInfo)
 			wa.syncAltGhostWithInfo(ctx, jid, userInfo)
+			wa.resyncPrivateChatName(ctx, jid)
 		}
 	}
+}
+
+// CurrentNameSchemeVersion is bumped whenever the rendered form of ghost displaynames or DM
+// portal names changes, so existing logins re-render once instead of keeping names produced
+// by the old scheme.
+//
+// 1: address-book fields removed from displayname_template (they leaked across users) and
+// DM portals named from private_chat_name_template instead.
+const CurrentNameSchemeVersion = 1
+
+// resyncNamesIfSchemeChanged runs a one-off contact resync when this login's names were
+// rendered by an older naming scheme. Without it a naming change only reaches chats that
+// happen to be resynced later, leaving existing rooms on the old names indefinitely.
+func (wa *WhatsAppClient) resyncNamesIfSchemeChanged() {
+	meta := wa.UserLogin.Metadata.(*waid.UserLoginMetadata)
+	if meta.NameSchemeVersion >= CurrentNameSchemeVersion {
+		return
+	}
+	log := wa.UserLogin.Log.With().Str("action", "resync names for new scheme").Logger()
+	ctx := log.WithContext(wa.Main.Bridge.BackgroundCtx)
+	log.Info().
+		Int("from_version", meta.NameSchemeVersion).
+		Int("to_version", CurrentNameSchemeVersion).
+		Msg("Naming scheme changed, resyncing contact names")
+
+	wa.resyncContacts(false, true)
+	if ctx.Err() != nil {
+		// Interrupted part-way: leave the version alone so the sweep runs again next time.
+		return
+	}
+
+	meta.NameSchemeVersion = CurrentNameSchemeVersion
+	if err := wa.UserLogin.Save(ctx); err != nil {
+		log.Err(err).Msg("Failed to save name scheme version")
+	}
+}
+
+// resyncPrivateChatName re-renders an existing DM portal's name from this login's own
+// contact info. DM portals are otherwise only resynced when the user opens the chat, so
+// without this a room keeps whatever name it was created with — including names that came
+// from another user's address book before private_chat_name_template existed.
+//
+// Only the name is touched: sending the full ChatInfo here would re-apply members and power
+// levels for every contact, which is far more Matrix traffic than a rename sweep needs.
+func (wa *WhatsAppClient) resyncPrivateChatName(ctx context.Context, jid types.JID) {
+	name := wa.privateChatName(ctx, jid)
+	if name == "" {
+		return
+	}
+	portal, err := wa.Main.Bridge.GetExistingPortalByKey(ctx, wa.makeWAPortalKey(jid))
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Stringer("jid", jid).Msg("Failed to get portal to resync name")
+		return
+	} else if portal == nil || portal.MXID == "" || portal.Name == name {
+		return
+	}
+	portal.UpdateInfo(ctx, &bridgev2.ChatInfo{Name: &name}, wa.UserLogin, nil, time.Time{})
 }
 
 func (wa *WhatsAppClient) syncAltGhostWithInfo(ctx context.Context, jid types.JID, info *bridgev2.UserInfo) {
