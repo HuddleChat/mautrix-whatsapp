@@ -20,6 +20,17 @@ proxy_only_login: false
 # {{.FullName}}      - Name you set in the contacts list
 displayname_template: '{{or .BusinessName .PushName .Phone .RedactedPhone "Unknown user"}} (WA)'
 
+# Name template for DM portal rooms. Takes the same fields as displayname_template.
+#
+# Ghost displaynames are global (one puppet per phone number for the entire bridge), so
+# address-book fields like {{.FullName}} must NOT be used in displayname_template: the last
+# user to sync a shared contact overwrites that contact's name for everyone else. Portal
+# rooms are per-login when split_portals is enabled, so address-book fields are safe here.
+#
+# When this renders a non-empty string the DM room is named with it and is no longer renamed
+# to follow the ghost. Leave empty to keep the default behaviour of naming DMs after ghosts.
+private_chat_name_template: ''
+
 # Should incoming calls send a message to the Matrix room?
 call_start_notices: true
 # Should another user's cryptographic identity changing send a message to Matrix?

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -165,6 +166,11 @@ func (wa *WhatsAppClient) wrapDMInfo(ctx context.Context, jid types.JID) *bridge
 	if jid.Server == types.BotServer {
 		info.Topic = ptr.Ptr(BotChatTopic)
 	}
+	if name := wa.privateChatName(ctx, jid); name != "" {
+		// Setting a name here also sets NameIsCustom on the portal, which stops
+		// UpdateInfoFromGhost from overwriting it with the global ghost displayname.
+		info.Name = &name
+	}
 	if jid == wa.JID.ToNonAD() {
 		// For chats with self, force-split the members so the user's own ghost is always in the room.
 		info.Members.MemberMap = map[networkid.UserID]bridgev2.ChatMember{
@@ -173,6 +179,26 @@ func (wa *WhatsAppClient) wrapDMInfo(ctx context.Context, jid types.JID) *bridge
 		}
 	}
 	return info
+}
+
+// privateChatName renders this login's own name for a DM peer using
+// private_chat_name_template. Unlike ghost displaynames (which are global across the whole
+// bridge), portal rooms are per-login when split_portals is enabled, so address-book fields
+// can be used here without leaking one user's private contact label to another user.
+//
+// Returns "" when no template is configured, the peer is the user themselves, or the
+// template rendered empty — callers must then leave ChatInfo.Name nil.
+func (wa *WhatsAppClient) privateChatName(ctx context.Context, jid types.JID) string {
+	if wa.Main.Config.PrivateChatNameTemplate == "" || jid == wa.JID.ToNonAD() {
+		return ""
+	}
+	contact, err := wa.GetStore().Contacts.GetContact(ctx, jid)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Stringer("jid", jid).
+			Msg("Failed to get contact info for private chat name")
+		return ""
+	}
+	return strings.TrimSpace(wa.Main.Config.FormatPrivateChatName(jid, "", contact))
 }
 
 func (wa *WhatsAppClient) wrapStatusBroadcastInfo(ctx context.Context) *bridgev2.ChatInfo {

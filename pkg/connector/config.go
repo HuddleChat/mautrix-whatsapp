@@ -34,6 +34,13 @@ type Config struct {
 	ProxyOnlyLogin bool   `yaml:"proxy_only_login"`
 
 	DisplaynameTemplate string `yaml:"displayname_template"`
+	// PrivateChatNameTemplate names DM portal rooms from the *receiving login's* own
+	// contact store. Ghost displaynames are global (one puppet per phone number for the
+	// whole bridge), so putting address-book fields like .FullName in DisplaynameTemplate
+	// leaks one user's private label for a contact to every other user who shares it.
+	// Portal rooms are per-login when split_portals is enabled, so address-book fields are
+	// safe here. Leave empty to keep upstream behaviour (name DMs after the ghost).
+	PrivateChatNameTemplate string `yaml:"private_chat_name_template"`
 
 	CallStartNotices            bool          `yaml:"call_start_notices"`
 	IdentityChangeNotices       bool          `yaml:"identity_change_notices"`
@@ -75,7 +82,8 @@ type Config struct {
 		BackwardsOnDemand bool `yaml:"backwards_on_demand"`
 	} `yaml:"history_sync"`
 
-	displaynameTemplate *template.Template `yaml:"-"`
+	displaynameTemplate     *template.Template `yaml:"-"`
+	privateChatNameTemplate *template.Template `yaml:"-"`
 }
 
 type umConfig Config
@@ -99,6 +107,16 @@ func (c *Config) PostProcess() error {
 	if err != nil {
 		return fmt.Errorf("failed to execute displayname template: %w", err)
 	}
+	if c.PrivateChatNameTemplate != "" {
+		c.privateChatNameTemplate, err = template.New("private_chat_name").Parse(c.PrivateChatNameTemplate)
+		if err != nil {
+			return err
+		}
+		_, err = c.formatPrivateChatName(types.PSAJID, "", types.ContactInfo{})
+		if err != nil {
+			return fmt.Errorf("failed to execute private chat name template: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -111,6 +129,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "proxy_only_login")
 
 	helper.Copy(up.Str, "displayname_template")
+	helper.Copy(up.Str, "private_chat_name_template")
 
 	helper.Copy(up.Bool, "call_start_notices")
 	helper.Copy(up.Bool, "identity_change_notices")
@@ -160,7 +179,7 @@ type DisplaynameParams struct {
 	Short  string
 }
 
-func (c *Config) formatDisplayname(jid types.JID, phone string, contact types.ContactInfo) (string, error) {
+func (c *Config) executeNameTemplate(tpl *template.Template, jid types.JID, phone string, contact types.ContactInfo) (string, error) {
 	var nameBuf strings.Builder
 	if phone == "" && jid.Server == types.DefaultUserServer {
 		phone = "+" + jid.User
@@ -168,7 +187,7 @@ func (c *Config) formatDisplayname(jid types.JID, phone string, contact types.Co
 	if contact.RedactedPhone == "" && phone != "" {
 		contact.RedactedPhone = redactPhone(phone)
 	}
-	err := c.displaynameTemplate.Execute(&nameBuf, &DisplaynameParams{
+	err := tpl.Execute(&nameBuf, &DisplaynameParams{
 		ContactInfo: contact,
 		Phone:       phone,
 
@@ -180,6 +199,29 @@ func (c *Config) formatDisplayname(jid types.JID, phone string, contact types.Co
 		Short:  contact.FirstName,
 	})
 	return nameBuf.String(), err
+}
+
+func (c *Config) formatDisplayname(jid types.JID, phone string, contact types.ContactInfo) (string, error) {
+	return c.executeNameTemplate(c.displaynameTemplate, jid, phone, contact)
+}
+
+func (c *Config) formatPrivateChatName(jid types.JID, phone string, contact types.ContactInfo) (string, error) {
+	if c.privateChatNameTemplate == nil {
+		return "", nil
+	}
+	return c.executeNameTemplate(c.privateChatNameTemplate, jid, phone, contact)
+}
+
+// FormatPrivateChatName renders the DM portal room name for a single login's view of a
+// contact. Returns "" when no template is configured or the template produced nothing, in
+// which case the caller must leave ChatInfo.Name nil so the room keeps being named after
+// the (global) ghost.
+func (c *Config) FormatPrivateChatName(jid types.JID, phone string, contact types.ContactInfo) string {
+	name, err := c.formatPrivateChatName(jid, phone, contact)
+	if err != nil {
+		panic(err)
+	}
+	return name
 }
 
 func (c *Config) FormatDisplayname(jid types.JID, phone string, contact types.ContactInfo) string {
