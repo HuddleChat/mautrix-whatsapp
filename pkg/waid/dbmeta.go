@@ -50,6 +50,12 @@ type UserLoginMetadata struct {
 	// fields from displayname_template) reaches existing rooms instead of only new ones.
 	NameSchemeVersion int `json:"name_scheme_version,omitempty"`
 
+	// DMAvatarSchemeVersion records whether this login's existing DM portals have had their
+	// profile pictures fetched with this login's own session. DM portals are never enqueued
+	// for background resync, so without a one-off sweep a change here would only ever reach
+	// newly created rooms.
+	DMAvatarSchemeVersion int `json:"dm_avatar_scheme_version,omitempty"`
+
 	MData json.RawMessage `json:"mdata,omitempty"`
 }
 

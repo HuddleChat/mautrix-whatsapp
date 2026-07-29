@@ -171,6 +171,23 @@ func (wa *WhatsAppClient) wrapDMInfo(ctx context.Context, jid types.JID) *bridge
 		// UpdateInfoFromGhost from overwriting it with the global ghost displayname.
 		info.Name = &name
 	}
+	// Fetch the peer's picture with this login's own session, onto this login's own portal.
+	//
+	// Whether you may see a profile picture is decided per viewer, but ghost puppets are
+	// global — one @whatsapp_<phone> for the whole bridge — so a ghost's avatar is whatever
+	// the first login to ask happened to be told, and mautrix files a refusal as settled
+	// (avatar_id "unauthorized", avatar_set true) that nothing ever retries. One user being
+	// refused therefore hides the picture from every other user permanently, and one user
+	// being allowed publishes it to users the contact hid it from. Portals are per-login
+	// under split_portals, so the portal is the only place a per-viewer picture can live.
+	//
+	// This is also what puts a picture on DM rooms at all now: UpdateInfoFromGhost, the only
+	// path that copied one across, bails out on portals with a custom name — which, since
+	// private_chat_name_template, is every DM.
+	info.ExtraUpdates = bridgev2.MergeExtraUpdaters(
+		info.ExtraUpdates,
+		wa.makePortalAvatarFetcher("", types.EmptyJID, time.Time{}),
+	)
 	if jid == wa.JID.ToNonAD() {
 		// For chats with self, force-split the members so the user's own ghost is always in the room.
 		info.Members.MemberMap = map[networkid.UserID]bridgev2.ChatMember{

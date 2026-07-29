@@ -509,6 +509,64 @@ func (wa *WhatsAppClient) resyncPrivateChatName(ctx context.Context, jid types.J
 	portal.UpdateInfo(ctx, &bridgev2.ChatInfo{Name: &name}, wa.UserLogin, nil, time.Time{})
 }
 
+// CurrentDMAvatarSchemeVersion is bumped when existing DM portals need their profile
+// pictures re-fetched with their own login's session.
+//
+// 1: DM portals started carrying their own picture instead of inheriting the global ghost's.
+const CurrentDMAvatarSchemeVersion = 1
+
+// resyncDMAvatarsIfSchemeChanged fetches each existing DM portal's picture once, using this
+// login's own session.
+//
+// Nothing else would reach these rooms: EnqueuePortalResync skips DMs outright, so a DM
+// portal only receives chat info when it is created. Without this sweep the fix would apply
+// to new chats only, and every room a user already has would keep whatever the shared ghost
+// last said — including another login's "unauthorized".
+func (wa *WhatsAppClient) resyncDMAvatarsIfSchemeChanged() {
+	meta := wa.UserLogin.Metadata.(*waid.UserLoginMetadata)
+	if meta.DMAvatarSchemeVersion >= CurrentDMAvatarSchemeVersion {
+		return
+	}
+	log := wa.UserLogin.Log.With().Str("action", "resync dm avatars").Logger()
+	ctx := log.WithContext(wa.Main.Bridge.BackgroundCtx)
+
+	userPortals, err := wa.Main.Bridge.DB.UserPortal.GetAllForLogin(ctx, wa.UserLogin.UserLogin)
+	if err != nil {
+		log.Err(err).Msg("Failed to list portals to resync DM avatars")
+		return
+	}
+	log.Info().Int("portal_count", len(userPortals)).Msg("Resyncing private chat avatars")
+	fetchAvatar := wa.makePortalAvatarFetcher("", types.EmptyJID, time.Time{})
+	for _, userPortal := range userPortals {
+		if ctx.Err() != nil {
+			// Interrupted part-way: leave the version alone so the sweep runs again next time.
+			return
+		}
+		jid, err := waid.ParsePortalID(userPortal.Portal.ID)
+		// The same servers wrapDMInfo covers — anything else is a group or a broadcast list,
+		// whose picture already comes from the chat itself rather than a ghost.
+		if err != nil || jid.Server != types.DefaultUserServer &&
+			jid.Server != types.HiddenUserServer && jid.Server != types.BotServer {
+			continue
+		}
+		portal, err := wa.Main.Bridge.GetExistingPortalByKey(ctx, wa.makeWAPortalKey(jid))
+		if err != nil {
+			log.Err(err).Stringer("jid", jid).Msg("Failed to get portal to resync avatar")
+			continue
+		} else if portal == nil || portal.MXID == "" {
+			continue
+		}
+		// Through UpdateInfo rather than calling the fetcher directly, so the portal is saved
+		// when the picture changes — the fetcher only mutates the in-memory portal.
+		portal.UpdateInfo(ctx, &bridgev2.ChatInfo{ExtraUpdates: fetchAvatar}, wa.UserLogin, nil, time.Time{})
+	}
+
+	meta.DMAvatarSchemeVersion = CurrentDMAvatarSchemeVersion
+	if err := wa.UserLogin.Save(ctx); err != nil {
+		log.Err(err).Msg("Failed to save DM avatar scheme version")
+	}
+}
+
 func (wa *WhatsAppClient) syncAltGhostWithInfo(ctx context.Context, jid types.JID, info *bridgev2.UserInfo) {
 	log := zerolog.Ctx(ctx)
 	var altJID types.JID

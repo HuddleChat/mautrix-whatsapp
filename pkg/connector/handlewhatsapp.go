@@ -183,6 +183,7 @@ func (wa *WhatsAppClient) handleWAEvent(rawEvt any) (success bool) {
 			go wa.syncRemoteProfile(ctx, nil)
 		}
 		go wa.resyncNamesIfSchemeChanged()
+		go wa.resyncDMAvatarsIfSchemeChanged()
 	case *events.OfflineSyncPreview:
 		log.Info().
 			Int("message_count", evt.Messages).
@@ -708,34 +709,37 @@ func (wa *WhatsAppClient) syncGhost(jid types.JID, reason string, pictureID *str
 
 func (wa *WhatsAppClient) handleWAPictureUpdate(ctx context.Context, evt *events.Picture) bool {
 	if evt.JID.Server == types.DefaultUserServer || evt.JID.Server == types.HiddenUserServer || evt.JID.Server == types.BotServer {
+		// Keep the global ghost current for group member lists, but carry on to update this
+		// login's own DM portal as well: the ghost's picture is shared by every login and so
+		// cannot answer "may this user see it", while the portal is per-login and can.
 		go wa.syncGhost(evt.JID, "picture event", &evt.PictureID)
-		return true
-	} else {
-		var changes bridgev2.ChatInfo
-		if evt.Remove {
-			changes.Avatar = &bridgev2.Avatar{Remove: true, ID: "remove"}
-		} else {
-			changes.ExtraUpdates = wa.makePortalAvatarFetcher(evt.PictureID, evt.Author, evt.Timestamp)
-		}
-		return wa.UserLogin.QueueRemoteEvent(&simplevent.ChatInfoChange{
-			EventMeta: simplevent.EventMeta{
-				Type: bridgev2.RemoteEventChatInfoChange,
-				LogContext: func(c zerolog.Context) zerolog.Context {
-					return c.
-						Str("wa_event_type", "picture").
-						Stringer("picture_author", evt.Author).
-						Str("new_picture_id", evt.PictureID).
-						Bool("remove_picture", evt.Remove)
-				},
-				PortalKey: wa.makeWAPortalKey(evt.JID),
-				Sender:    wa.makeEventSender(ctx, evt.Author),
-				Timestamp: evt.Timestamp,
-			},
-			ChatInfoChange: &bridgev2.ChatInfoChange{
-				ChatInfo: &changes,
-			},
-		}).Success
 	}
+	var changes bridgev2.ChatInfo
+	if evt.Remove {
+		changes.Avatar = &bridgev2.Avatar{Remove: true, ID: "remove"}
+	} else {
+		changes.ExtraUpdates = wa.makePortalAvatarFetcher(evt.PictureID, evt.Author, evt.Timestamp)
+	}
+	// No CreatePortal: a picture change is not a reason to materialise a room this login
+	// does not already have.
+	return wa.UserLogin.QueueRemoteEvent(&simplevent.ChatInfoChange{
+		EventMeta: simplevent.EventMeta{
+			Type: bridgev2.RemoteEventChatInfoChange,
+			LogContext: func(c zerolog.Context) zerolog.Context {
+				return c.
+					Str("wa_event_type", "picture").
+					Stringer("picture_author", evt.Author).
+					Str("new_picture_id", evt.PictureID).
+					Bool("remove_picture", evt.Remove)
+			},
+			PortalKey: wa.makeWAPortalKey(evt.JID),
+			Sender:    wa.makeEventSender(ctx, evt.Author),
+			Timestamp: evt.Timestamp,
+		},
+		ChatInfoChange: &bridgev2.ChatInfoChange{
+			ChatInfo: &changes,
+		},
+	}).Success
 }
 
 func (wa *WhatsAppClient) handleWAGroupInfoChange(ctx context.Context, evt *events.GroupInfo) bool {
