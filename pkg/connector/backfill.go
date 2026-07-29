@@ -29,6 +29,45 @@ import (
 
 var _ bridgev2.BackfillingNetworkAPI = (*WhatsAppClient)(nil)
 
+// historyMarkerKey labels an event as a replay of something WhatsApp already delivered
+// long ago, so the homeserver can be told not to notify for it.
+//
+// Only hungryserv can batch-send, so on Synapse mautrix replays history one ordinary
+// timeline event at a time. Push rules see no difference between a two-year-old message
+// being imported and a friend messaging right now, which is why linking an account fires
+// hundreds of notifications at the user. Every message that carries this marker came out
+// of the history-sync store; a live message is delivered as a remote message event and
+// never passes through here, so nothing the user is waiting for can be labelled by
+// accident.
+//
+// The Huddle client installs an override push rule matching this key with no actions.
+// Other Matrix clients ignore the field, and if the rule is missing the events simply
+// notify as they do today.
+//
+// The key deliberately contains no dots. Push rule conditions address content by
+// dot-separated path, and while a reverse-DNS name can be escaped there, a flat key
+// needs both ends to get nothing right.
+const historyMarkerKey = "huddle_backfill"
+
+// historyMarkerValue is a string because event_match — the oldest and most widely
+// implemented condition — only matches strings.
+const historyMarkerValue = "1"
+
+func markAsHistory(converted *bridgev2.ConvertedMessage) {
+	if converted == nil {
+		return
+	}
+	for _, part := range converted.Parts {
+		if part == nil {
+			continue
+		}
+		if part.Extra == nil {
+			part.Extra = make(map[string]any)
+		}
+		part.Extra[historyMarkerKey] = historyMarkerValue
+	}
+}
+
 func (wa *WhatsAppClient) historySyncLoop(ctx context.Context) {
 	dispatchTimer := time.NewTimer(wa.Main.Config.HistorySync.DispatchWait)
 
@@ -759,6 +798,7 @@ func (wa *WhatsAppClient) convertHistorySyncMessage(
 		Reactions:        make([]*bridgev2.BackfillReaction, 0, len(reactions)),
 	}
 	mediaReq := wa.processFailedMedia(ctx, portal.PortalKey, wrapped.ID, wrapped.ConvertedMessage, true)
+	markAsHistory(wrapped.ConvertedMessage)
 	for _, reaction := range reactions {
 		var sender types.JID
 		if reaction.GetKey().GetFromMe() {
